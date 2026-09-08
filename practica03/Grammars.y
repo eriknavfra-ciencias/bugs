@@ -1,13 +1,10 @@
 {
 module Grammars where
-
 import Lexer (Token(..))
 }
-
 %name parse
 %tokentype { Token }
 %error { parseError }
-
 %token
       var             { TokenId $$ }
       nat             { TokenNum $$ }
@@ -32,9 +29,7 @@ import Lexer (Token(..))
       "let*"          { TokenLetStar }
       '('             { TokenPA }
       ')'             { TokenPC }
-
 %%
-
 ASA : nat                           { Num $1 }
     | bool                          { Boolean $1 }
     | '(' '+' Args ')'              { Add $3 }
@@ -61,15 +56,20 @@ ASA : nat                           { Num $1 }
 --   * let* con una o mas asociaciones;
 --   * los no terminales Bindings y Binding.
 
+    | var                            { Id $1 }
+    | '(' "let" '(' Bindings ')' ASA ')'
+                                     { Let $4 $6 }
+    | '(' "let*" '(' Bindings ')' ASA ')'
+                                     { LetStar $4 $6 }
 Args : ASA ASA                       { [$1, $2] }
      | ASA Args                      { $1 : $2 }
-
+Bindings : Binding                   { [$1] }
+         | Binding Bindings          { $1 : $2 }
+Binding : '(' var ASA ')'            { ($2, $3) }
 {
 parseError :: [Token] -> a
 parseError toks = error ("Parse error: " ++ show toks)
-
 type Binding = (String, ASA)
-
 data ASA
   = Id String
   | Num Int
