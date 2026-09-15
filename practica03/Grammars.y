@@ -80,16 +80,20 @@ data ASA
   | Sub [ASA]
   | Mul [ASA]
   | Div [ASA]
+
   | Lt [ASA]
   | Gt [ASA]
   | Le [ASA]
   | Ge [ASA]
+
   | Expt ASA ASA
   | EqP ASA ASA
+
   | Not ASA
   | Add1 ASA
   | Sub1 ASA
   | ZeroP ASA
+  
   | Let [Binding] ASA
   | LetStar [Binding] ASA
   deriving (Eq, Show)
