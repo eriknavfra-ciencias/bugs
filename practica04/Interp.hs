@@ -1,0 +1,134 @@
+module Interp where
+
+import Grammars
+
+data ASA
+  = Id Nombre
+  | Num Int
+  | Boolean Bool
+  | Add ASA ASA
+  | Sub ASA ASA
+  | Not ASA
+  | Fun Nombre ASA
+  | App ASA ASA
+  deriving (Eq, Show)
+
+data Value
+  = NumV Int
+  | BooleanV Bool
+  | ClosureV Nombre ASA Env
+  deriving (Eq, Show)
+
+type Env = [(Nombre, Value)]
+
+-- RETO 1: desazucarado ----------------------------------------------------
+
+-- Convierte una lista no vacia de parametros distintos en funciones
+-- unarias anidadas. El primer parametro queda en la funcion exterior.
+curryFun :: [Nombre] -> ASA -> Maybe ASA
+curryFun [] _ = Nothing
+curryFun (x:xs) e
+  | x `elem` xs = Nothing
+  | otherwise   = case xs of
+      [] -> Just (Fun x e)
+      _  -> case curryFun xs e of
+        Just v  -> Just (Fun x v)
+        Nothing -> Nothing
+
+-- Convierte una aplicacion con uno o mas argumentos en aplicaciones unarias
+-- asociadas por la izquierda.
+curryApp :: ASA -> [ASA] -> Maybe ASA
+curryApp _ [] = Nothing
+curryApp e xs = Just (foldl App e xs)
+
+-- Convierte dos o mas operandos en operaciones binarias asociadas por la
+-- izquierda. El constructor recibido sera Add o Sub.
+binaryOp :: (ASA -> ASA -> ASA) -> [ASA] -> Maybe ASA
+binaryOp _ []  = Nothing
+binaryOp _ [_] = Nothing
+binaryOp cons (x:xs) = Just (foldl cons x xs)
+
+-- Convierte las ligaduras de let* en let anidados y despues elimina cada let
+-- mediante LetS x e1 e2 ==> App (Fun x e2') e1'. La primera ligadura debe
+-- quedar en el let exterior para que las siguientes puedan usarla.
+desugar :: SASA -> Maybe ASA
+desugar (NumS n)      = Just (Num n)
+desugar (BooleanS b)  = Just (Boolean b)
+desugar (IdS x)       = Just (Id x)
+
+desugar (NotS e)      = case desugar e of
+  Just e' -> Just (Not e')
+  Nothing -> Nothing
+
+desugar (AddS exprs) = case mapM desugar exprs of
+  Just ds -> binaryOp Add ds
+  Nothing -> Nothing
+
+desugar (SubS exprs)  = case mapM desugar exprs of
+  Just ds -> binaryOp Sub ds
+  Nothing -> Nothing
+
+desugar (FunS params body) = case desugar body of
+  Just b  -> curryFun params b
+  Nothing -> Nothing
+
+desugar (AppS f args) = case desugar f of
+  Just f' -> case mapM desugar args of
+    Just args' -> curryApp f' args'
+    Nothing    -> Nothing
+  Nothing -> Nothing
+
+desugar (LetS x val body) = case desugar val of
+  Just v' -> case desugar body of
+    Just b' -> Just (App (Fun x b') v')
+    Nothing -> Nothing
+  Nothing -> Nothing
+
+desugar (LetStarS bindings body) = case bindings of
+  [] -> desugar body
+  ((x, val) : rest) -> case desugar val of
+    Just v' -> case desugar (LetStarS rest body) of
+      Just b' -> Just (App (Fun x b') v')
+      Nothing -> Nothing
+    Nothing -> Nothing
+
+-- RETO 2: evaluacion con cerraduras ---------------------------------------
+
+-- Busca la asociacion mas reciente de un identificador.
+lookupEnv :: Nombre -> Env -> Maybe Value
+lookupEnv _ [] = Nothing
+lookupEnv x ((y, v):ys)
+  | x == y    = Just v
+  | otherwise = lookupEnv x ys
+
+-- Evalua con alcance estatico. Fun produce una cerradura con el ambiente
+-- actual. App evalua primero la posicion de funcion, despues el argumento y
+-- por ultimo el cuerpo en el ambiente guardado por la cerradura.
+-- La aplicacion es ansiosa: el argumento se exige aunque el cuerpo no lo use.
+-- Conserva la resta truncada y la convencion de que todo numero cuenta como
+-- verdadero cuando aparece como operando de Not.
+bigStep :: Env -> ASA -> Maybe Value
+bigStep _ (Num n)       = Just (NumV n)
+bigStep _ (Boolean b)   = Just (BooleanV b)
+bigStep env (Id x)      = lookupEnv x env
+
+bigStep env (Not e)     = case bigStep env e of
+  Just (BooleanV b) -> Just (BooleanV (not b))
+  Just (NumV n)     -> Just (BooleanV (False))
+  _                 -> Nothing
+
+bigStep env (Add e1 e2) = case (bigStep env e1, bigStep env e2) of
+  (Just (NumV n1), Just (NumV n2)) -> Just (NumV (n1 + n2))
+  _                                -> Nothing
+
+bigStep env (Sub e1 e2) = case (bigStep env e1, bigStep env e2) of
+  (Just (NumV n1), Just (NumV n2)) -> Just (NumV (max 0 (n1 - n2)))
+  _                                -> Nothing
+
+bigStep env (Fun param body) = Just (ClosureV param body env)
+
+bigStep env (App e1 e2) = case bigStep env e1 of
+  Just (ClosureV param body closureEnv) -> case bigStep env e2 of
+    Just argVal -> bigStep ((param, argVal) : closureEnv) body -- Llamada directa, sin Just
+    Nothing     -> Nothing
+  _ -> Nothing
